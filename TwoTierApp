@@ -1,0 +1,114 @@
+First create database container:
+- create a folder two-tier, copy/create init.sql file inside it.
+	- Content inside init.sql
+
+		CREATE DATABASE IF NOT EXISTS testdb;
+		USE testdb;
+		
+		CREATE TABLE IF NOT EXISTS users (
+		        id INT AUTO_INCREMENT PRIMARY KEY,
+		        name VARCHAR(100),
+		        email VARCHAR(100)
+		);
+		
+		INSERT INTO users (name, email) VALUES
+		('sherlock', 'shrelock@example.com'),
+		('watson', 'watson@example.com');
+
+- Run container using below command:
+
+		docker run --name mysql-container1 --network mynetwork -p 3308:3308 -e MYSQL_ROOT_PASSWORD=password -e MYSQL_DATABASE=testdb -d mysql:latest
+		
+- Copy init.sql file inside container using below command:
+
+		docker cp init.sql mysql-container1:/init.sql
+
+- Execute database container by executing source command as environment
+
+		docker exec -it mysql-container1 mysql -uroot -ppassword -e "source /init.sql"
+
+- Login to db container:
+
+		docker exec -it mysql-container1 mysql -uroot -ppassword
+		show databases;
+		use testdb;
+		show tables;
+		select * from users;
+
+Second, create flask container -
+	- Create app.py, requirements.txt and Dockerfile
+	- Content of requirements.txt
+
+		Flask
+		mysql-connector-python
+
+- Content of app.py
+
+		from flask import Flask, request, jsonify
+		import mysql.connector
+		import os
+		
+		app = Flask(__name__)
+		
+		#Database connection details
+		db_config = {
+			"host": "mysql-container1", # This is the container name, since they are in the same network
+			"user": "root",
+			"password": "password",
+			"database": "testdb"
+		}
+		
+		@app.route('/')
+		def index():
+			return "Welcome to the Two-tier Flask app!"
+			
+		@app.route('/users', methods=['GET']) # retrieve the data from the application
+		def get_users():
+			try:
+				conn = mysql.connector.connect(**db_config)
+				cursor = conn.cursor(dictionary=True)
+				cursor.execute("SELECT * FROM users")
+				users = cursor.fetchall()
+				cursor.close()
+				conn.close()
+				return jsonify(users)
+			except Exception as e:
+				return jsonify({"error": str(e)})
+				
+		@app.route('/add_user', methods=['POST']) #Adding any new data to the application
+		def add_user():
+			data = request.json
+			try:
+				cursor = mysql.connector.connect(**db_config)
+				cursor = conn.cursor()
+				cursor.execute("INSERT INTO users (name, email) VALUES (%s, %s)", (data['name'], data['email']))
+				conn.commit()
+				cursor.close()
+				conn.close()
+				return jsonify({"message": "User added successfully!"})
+			except Exception as e:
+				return jsonify({"error": str(e)})
+		if __name__ == '__main__':
+			app.run(host='0.0.0.0', port=5000)
+
+- Dockerfile content
+
+		FROM python:3.9
+		
+		WORKDIR /app
+		
+		COPY app.py /app
+		COPY requirements.txt /app
+		
+		RUN pip install -r requirements.txt
+		
+		EXPOSE 5000
+		CMD ["python" , "app.py" ]
+
+- Command to build flask app with dockerfile
+
+		○ docker build -t flask-app-two-tier .
+
+- Command to create container for flask app and connect with database container
+
+		docker run --name flask-container2 --network mynetwork -p 5002:5000 -e MYSQL_HOST=mysql-container1 -e MYSQL_ROOT_PASSWORD=password -e MYSQL_DB=testdb -d flask-app-two-tier
